@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tensormux"
+version = "0.1.0"
+description = "OpenAI-compatible inference gateway with routing, health-based failover, and observability"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi[standard]",
+    "uvicorn",
+    "httpx",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "pyyaml",
+    "prometheus-client",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-asyncio",
+    "types-PyYAML",
+    "rich",
+]
+
+[project.scripts]
+tensormux = "tensormux.cli.main:cli"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

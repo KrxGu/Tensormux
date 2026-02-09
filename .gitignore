@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Tensormux runtime
+tensormux_requests.jsonl
+*.jsonl
+
+# OS
+.DS_Store
+Thumbs.db

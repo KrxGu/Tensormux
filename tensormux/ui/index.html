@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tensormux Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e1e4e8; padding: 24px; }
+  h1 { font-size: 24px; margin-bottom: 4px; color: #58a6ff; }
+  .subtitle { color: #8b949e; font-size: 14px; margin-bottom: 24px; }
+  .strategy-badge { display: inline-block; background: #1f2937; border: 1px solid #30363d; border-radius: 6px; padding: 4px 12px; font-size: 13px; color: #79c0ff; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; }
+  .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .card-name { font-size: 16px; font-weight: 600; }
+  .badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .badge-healthy { background: #0d3520; color: #3fb950; }
+  .badge-unhealthy { background: #3d1214; color: #f85149; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .stat { text-align: center; }
+  .stat-value { font-size: 22px; font-weight: 700; color: #c9d1d9; }
+  .stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+  .meta { margin-top: 12px; font-size: 12px; color: #8b949e; display: flex; gap: 12px; }
+  .meta span { background: #1f2937; padding: 2px 8px; border-radius: 4px; }
+  .logs { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; }
+  .logs h2 { font-size: 16px; margin-bottom: 12px; color: #c9d1d9; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; }
+  td { padding: 6px 10px; border-bottom: 1px solid #21262d; }
+  .status-200 { color: #3fb950; }
+  .status-502, .status-503 { color: #f85149; }
+  .stream-true { color: #d2a8ff; }
+  .updated { color: #8b949e; font-size: 12px; text-align: right; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <h1>Tensormux</h1>
+  <p class="subtitle">Inference Gateway Dashboard</p>
+  <div id="strategy" class="strategy-badge">Loading...</div>
+  <div id="backends" class="grid"></div>
+  <div class="logs">
+    <h2>Recent Requests</h2>
+    <table>
+      <thead><tr><th>Request ID</th><th>Backend</th><th>Model</th><th>Stream</th><th>Status</th><th>Latency</th><th>Time</th></tr></thead>
+      <tbody id="log-body"></tbody>
+    </table>
+  </div>
+  <p class="updated" id="updated"></p>
+
+<script>
+function renderBackends(data) {
+  const el = document.getElementById('backends');
+  document.getElementById('strategy').textContent = 'Strategy: ' + data.strategy;
+  el.innerHTML = data.backends.map(b => `
+    <div class="card">
+      <div class="card-header">
+        <span class="card-name">${b.name}</span>
+        <span class="badge ${b.healthy ? 'badge-healthy' : 'badge-unhealthy'}">${b.healthy ? 'Healthy' : 'Unhealthy'}</span>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="stat-value">${b.inflight}</div><div class="stat-label">Inflight</div></div>
+        <div class="stat"><div class="stat-value">${b.ewma_latency_ms.toFixed(1)}</div><div class="stat-label">EWMA ms</div></div>
+        <div class="stat"><div class="stat-value">${b.weight}</div><div class="stat-label">Weight</div></div>
+      </div>
+      <div class="meta">
+        <span>${b.engine}</span>
+        <span>${b.model}</span>
+        ${b.tags.map(t => '<span>' + t + '</span>').join('')}
+        <span>${b.url}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+
+function renderRequests(records) {
+  const tbody = document.getElementById('log-body');
+  tbody.innerHTML = records.map(r => `
+    <tr>
+      <td>${r.request_id || '-'}</td>
+      <td>${r.chosen_backend}</td>
+      <td>${r.model}</td>
+      <td class="${r.stream ? 'stream-true' : ''}">${r.stream}</td>
+      <td class="status-${r.status_code}">${r.status_code}</td>
+      <td>${r.latency_ms.toFixed(1)}ms</td>
+      <td>${new Date(r.timestamp).toLocaleTimeString()}</td>
+    </tr>
+  `).join('');
+}
+
+async function poll() {
+  try {
+    const [statusResp, reqResp] = await Promise.all([
+      fetch('/tensormux/status'),
+      fetch('/tensormux/requests'),
+    ]);
+    const statusData = await statusResp.json();
+    const reqData = await reqResp.json();
+    renderBackends(statusData);
+    renderRequests(reqData.requests || []);
+    document.getElementById('updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+  } catch(e) { console.error('Poll error:', e); }
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

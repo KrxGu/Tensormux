@@ -1,0 +1,32 @@
+services:
+  backend-fast:
+    build: ./mock_backend
+    environment:
+      - BACKEND_NAME=fast
+      - BASE_LATENCY_MS=50
+      - MODEL_NAME=demo-model
+    command: uvicorn server:app --host 0.0.0.0 --port 9001
+    ports:
+      - "9001:9001"
+
+  backend-slow:
+    build: ./mock_backend
+    environment:
+      - BACKEND_NAME=slow
+      - BASE_LATENCY_MS=300
+      - MODEL_NAME=demo-model
+    command: uvicorn server:app --host 0.0.0.0 --port 9002
+    ports:
+      - "9002:9002"
+
+  tensormux:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - TENSORMUX_CONFIG=/app/config.yaml
+    depends_on:
+      - backend-fast
+      - backend-slow
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro

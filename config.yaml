@@ -1,0 +1,31 @@
+gateway:
+  host: "0.0.0.0"
+  port: 8080
+  strategy: "least_inflight"
+
+health:
+  interval_s: 5
+  timeout_s: 2
+  fail_threshold: 2
+  success_threshold: 1
+
+logging:
+  level: "INFO"
+  jsonl_path: "./tensormux_requests.jsonl"
+
+backends:
+  - name: "fast"
+    url: "http://backend-fast:9001"
+    engine: "mock"
+    model: "demo-model"
+    weight: 80
+    tags: ["fast"]
+    health_endpoint: "/v1/models"
+
+  - name: "slow"
+    url: "http://backend-slow:9002"
+    engine: "mock"
+    model: "demo-model"
+    weight: 20
+    tags: ["cheap"]
+    health_endpoint: "/v1/models"
