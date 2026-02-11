@@ -1,140 +1,129 @@
-# CLAUDE.md — Tensormux OSS Core (v0.1)
+# CLAUDE.md (Core Repo) — Tensormux OSS v0.1 Hardening + Real Backend Validation
 
-Owner: Krish Gupta  
-Project: Tensormux (OSS Core)  
-Primary goal: Ship an installable OSS inference gateway + routing/control layer that sits above multiple OpenAI-compatible inference backends (vLLM/SGLang/TensorRT-LLM or mocks), with streaming, health/failover, routing strategies, metrics, and logs.  
-Reference diagrams: `./diagrams/` (local path provided by user)
+This repo is **Tensormux**, an OpenAI-compatible inference gateway that sits in front of multiple inference backends (vLLM, SGLang, TensorRT-LLM, and any OpenAI-compatible server). It provides routing, health checks, failover, streaming passthrough, metrics, audit logs, and a minimal operator UI.
 
----
+This file is the execution guide for Claude Code to help build, harden, and ship **OSS v0.1** and validate it on a real GPU backend (RTX 4070).
 
-## 0) What we are building
+## Product scope and positioning
 
-### One-liner
-**Tensormux OSS Core is an OpenAI-compatible inference gateway that routes requests across multiple inference backends with health-based failover, basic fleet-aware routing strategies, streaming passthrough, and observability.**
+### What Tensormux is (v0.1)
 
-### What it does
-- Provides a **single OpenAI-compatible API** endpoint for applications:
-  - `POST /v1/chat/completions` (streaming + non-streaming)
-  - `GET /v1/models` (minimal passthrough or aggregated)
-- Maintains a **backend registry** with runtime state:
-  - health (active + passive)
-  - inflight requests
-  - EWMA latency
-- Implements **routing strategies**:
-  - weighted round robin
-  - least inflight
-  - EWMA latency
-- Implements **health checking and automatic failover**:
-  - periodic checks per backend
-  - passive failure detection on request errors
-  - routing excludes unhealthy backends
-- Exposes **observability**:
-  - Prometheus metrics at `GET /metrics`
-  - JSONL request logs (backend chosen, latency, status)
+* An **L7 inference gateway** with **OpenAI-compatible API** support
+* Routes requests to backends based on configurable strategies
+* Passes through streaming (SSE) with minimal overhead
+* Performs active health checks and automatic failover
+* Exposes Prometheus metrics and structured audit logs
+* Includes a minimal dashboard for operator visibility
 
-### What it is NOT (avoid scope creep)
-- Not an inference engine
-- Not a GPU compute provider
-- Not a distributed multi-cluster control plane (yet)
-- Not a full enterprise RBAC/budgets platform (later)
+### What Tensormux is not (v0.1)
+
+* Not an inference engine
+* Not an engine-level scheduler (it does not manage KV cache, batching internals, prefill/decode scheduling yet)
+* Not a multi-tenant enterprise control plane yet
+
+### Roadmap direction (post v0.1)
+
+After OSS v0.1 is public and validated, we will address inference-specific critiques with one high-signal wedge:
+
+* **Token-aware routing** (estimated completion time based on prompt and generation params)
+  Then:
+* **Backend telemetry adapters** (scrape engine metrics and GPU signals for better routing inputs)
+
+Do not block OSS v0.1 release on deep inference scheduling. Ship v0.1 as a clean, useful gateway, then iterate.
 
 ---
 
-## 1) How it works (architecture)
+## Current priorities (P0 first)
 
-### Conceptual flow (see diagrams in `./diagrams/`)
-- Client sends OpenAI-compatible requests to Tensormux gateway (FastAPI).
-- Gateway validates minimal request shape, creates request context.
-- Router selects a backend based on eligibility + strategy + stats (registry).
-- Proxy forwards request using httpx:
-  - non-stream: forward JSON, return JSON
-  - stream: passthrough SSE bytes via StreamingResponse (no parse)
-- Registry updates inflight counters and EWMA latency on completion.
-- Health checker runs in background:
-  - pings backend health endpoint periodically
-  - updates healthy/unhealthy state
-- Metrics and logger capture request lifecycle.
+### P0: Make OSS credible and runnable
 
-### Components (code modules)
-- `tensormux/api/` — FastAPI app + OpenAI routes + admin/status routes
-- `tensormux/config/` — YAML -> Pydantic models; config validation
-- `tensormux/registry/` — backend runtime state + stats + eligibility filtering
-- `tensormux/router/` — routing strategy interface + implementations
-- `tensormux/proxy/` — httpx forwarding, SSE passthrough, error mapping
-- `tensormux/health/` — active checks + passive failure tracking
-- `tensormux/metrics/` — Prometheus collectors + `/metrics` endpoint
-- `tensormux/util/` — request ids, timing, helpers
-- `tensormux/cli/` — `tensormux serve -c config.yaml`
+1. Repo is public and README quickstart works in under 10 minutes
+2. Docker Compose demo works locally
+3. Real backend validation works on RTX 4070 with vLLM (and optionally SGLang)
+4. Streaming passthrough correctness is proven
+5. Failover works against real backends
+6. Metrics and logs are accurate and low-risk for production (timeouts, cancellation, label cardinality)
+
+### P1: Improve ergonomics for adoption
+
+* Example configs for common setups
+* Production adoption doc (security, logging, timeouts, deployment patterns)
+* GitHub release tag (v0.1.0) and basic changelog
+
+### P2: Inference-aware wedge
+
+* Token-aware routing strategy with validation results
+* Backend signal adapters (metrics, GPU memory)
 
 ---
 
-## 2) Non-negotiables for v0.1
+## Engineering rules for v0.1
 
-These must be true before tagging `v0.1.0`:
-1) `/v1/chat/completions` works as drop-in OpenAI-compatible gateway for **non-stream and stream**
-2) Streaming is correct:
-   - no SSE parsing
-   - cancellation works
-3) Routes across **2+ backends** with **3 strategies**
-4) Health checks + failover:
-   - excludes unhealthy backends automatically
-5) Observability:
-   - Prometheus metrics at `/metrics`
-   - JSONL logs per request
-6) Demo runs without GPUs (Docker Compose + mock backends)
-7) README quickstart reproduces in under 10 minutes
+### Reliability
 
----
+* Upstream calls must use safe defaults:
 
-## 3) Scope boundaries (what to keep for later)
+  * timeouts configured
+  * connection pooling
+  * retries only for safe idempotent paths where appropriate
+* Client disconnect during streaming must cancel upstream request
 
-Do NOT implement in v0.1:
-- SSO/RBAC, audit logs
-- Budgets and cost attribution per team
-- Distributed control plane / multi-region
-- Advanced policies (OPA/Rego), plugin marketplace
-- Deep inference telemetry (KV cache, P/D disaggregation signals)
-- Full UI dashboard (optional minimal UI only at end)
+### Observability and safety
+
+* Do not log prompts by default
+* Audit logs contain metadata only (request_id, backend, model, stream, latency, status)
+* Prometheus labels must avoid unbounded cardinality
+
+  * Do not label by full prompt or user id
+  * Model label is allowed only if bounded and controllable
+
+### Compatibility
+
+* OpenAI-compatible request and response shapes remain stable
+* Streaming SSE passthrough must preserve event boundaries and end with `[DONE]`
 
 ---
 
-## 4) Setup: exact commands
+## OSS v0.1 definition of done
 
-### Local dev (Python)
-From repo root:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
+### Features included
 
-pip install "fastapi[standard]" uvicorn httpx pydantic pydantic-settings pyyaml prometheus-client
-pip install ruff mypy pytest pytest-asyncio types-PyYAML rich
-```
+* OpenAI-compatible endpoints used in demo:
 
-### Run dev server
-```bash
-uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080 --reload
-```
+  * `/v1/models`
+  * `/v1/chat/completions` (stream and non-stream)
+* Routing strategies:
 
-### Lint/type/test
-```bash
-ruff check .
-mypy tensormux
-pytest -q
-```
+  * least_inflight
+  * weighted_round_robin
+  * ewma_latency (basic)
+* Health checks and failover (active checks + request-path passive signal)
+* Metrics:
 
-### Docker demo
-```bash
-docker compose up --build
-```
+  * request counters
+  * latency histograms
+  * inflight gauges
+  * backend health gauges
+* Audit logs (JSONL)
+* Minimal operator UI:
+
+  * backend status
+  * recent requests table
+  * routing strategy display
+
+### Explicitly out of scope for OSS v0.1
+
+* Multi-tenant RBAC/SSO
+* Budget enforcement and chargeback
+* Config rollout workflows
+* Distributed control plane across multiple gateways
 
 ---
 
-## 5) Configuration spec (v0.1)
+## Existing repo config schema
 
-YAML file defines gateway + backends + health + logging.
+The config is a YAML file loaded by `TensormuxConfig` (see `tensormux/config/models.py`).
 
-### Example `config.yaml`
 ```yaml
 gateway:
   host: "0.0.0.0"
@@ -152,341 +141,340 @@ logging:
   jsonl_path: "./tensormux_requests.jsonl"
 
 backends:
-  - name: "fast"
-    url: "http://backend-fast:9001"
-    engine: "mock"
-    model: "demo-model"
-    weight: 80
-    tags: ["fast"]
-    health_endpoint: "/v1/models"
-
-  - name: "slow"
-    url: "http://backend-slow:9002"
-    engine: "mock"
-    model: "demo-model"
-    weight: 20
-    tags: ["cheap"]
-    health_endpoint: "/v1/models"
+  - name: "backend-name"
+    url: "http://host:port"       # base URL of the backend (no /v1 suffix)
+    engine: "vllm"                # label only, not used for routing
+    model: "model-name"           # exact model match for eligibility
+    weight: 1                     # used only by weighted_round_robin
+    tags: ["tag1"]                # optional, for tag-based eligibility filtering
+    health_endpoint: "/v1/models" # endpoint pinged by health checker
 ```
 
-Rules:
-- `health_endpoint` must be configurable per backend (default `/v1/models`).
-- `model` and `tags` are used for eligibility filtering.
-- `strategy` selects router strategy.
-- `weight` used only by weighted RR.
+Key schema notes:
+* `url` is the base URL (e.g., `http://localhost:8000`), NOT `base_url`
+* `model` is a single string, NOT a list
+* Health config uses `interval_s` and `timeout_s` (with `_s` suffix)
 
 ---
 
-## 6) API surface (v0.1)
+## Local dev setup
 
-### Inbound (client -> Tensormux)
-- `POST /v1/chat/completions`
-  - Accepts OpenAI-like payload: `{model, messages, stream?}`
-  - Must support:
-    - `stream=false` JSON response passthrough
-    - `stream=true` SSE passthrough
-  - Must add response headers:
-    - `x-request-id`
-    - `x-tensormux-backend`
+### Prerequisites
 
-- `GET /v1/models`
-  - Minimal: proxy to a chosen backend or aggregate known models from config
+* Python 3.9+
+* Docker + Docker Compose
+* For GPU validation: NVIDIA driver + CUDA runtime (`nvidia-smi` must work)
+* Hugging Face token if pulling gated models
 
-### Admin/Status (optional but recommended)
-- `GET /tensormux/status`
-  - returns backend list + health + inflight + ewma latency + current strategy
-- `GET /metrics` (Prometheus)
+### Install and run checks
 
----
-
-## 7) Routing rules (v0.1)
-
-### Eligibility filtering
-Given request ctx (model, tags):
-- Eligible if:
-  - backend has model match (exact match for v0.1)
-  - tags subset match if specified
-  - backend is healthy (unless override is introduced later)
-
-### Strategies
-- `weighted_round_robin`: choose based on static weights among eligible
-- `least_inflight`: choose backend with lowest inflight count
-- `ewma_latency`: choose backend with lowest EWMA latency
-
-### Debug visibility (must)
-- Always return `x-tensormux-backend: <backend_name>`
-- Optionally include `x-tensormux-strategy: <strategy_name>`
-
----
-
-## 8) Health checking + failover (v0.1)
-
-### Active health checks (background task)
-- Every `health.interval_s`, for each backend:
-  - `GET backend.url + backend.health_endpoint` with timeout
-  - On success: increment success count, reset failure count
-  - On failure/timeout: increment failure count
-  - Mark unhealthy if failure count >= fail_threshold
-  - Mark healthy if success count >= success_threshold
-
-### Passive health checks (in request path)
-- On request errors (connect timeout, connection error, repeated 5xx):
-  - increment backend failure count
-  - mark unhealthy if threshold reached
-
-### Failover behavior
-- Router must exclude unhealthy backends
-- If no eligible backend exists:
-  - return 503 with clear JSON error: `{ "error": { "message": "...", "type": "tensormux_no_backend" } }`
-
----
-
-## 9) Streaming behavior requirements (critical)
-
-### SSE passthrough
-- Do not parse events
-- Do not re-chunk
-- Forward bytes as received using FastAPI StreamingResponse
-- Set `media_type="text/event-stream"`
-- Ensure httpx read timeout does not kill long streams (configure)
-
-### Cancellation
-- If client disconnects:
-  - cancel upstream request and close stream
-  - must not leak tasks/sockets
-
----
-
-## 10) Observability (v0.1)
-
-### Prometheus metrics at `/metrics`
-Minimum metrics:
-- Counter: `tensormux_requests_total{backend,model,status,stream}`
-- Histogram: `tensormux_request_latency_ms_bucket{backend,model}`
-- Gauge: `tensormux_backend_inflight{backend}`
-- Gauge: `tensormux_backend_healthy{backend}`
-
-### JSONL logging
-Every request writes a single JSON line:
-- request_id
-- timestamp
-- model
-- stream (bool)
-- chosen backend
-- status_code
-- latency_ms
-- error_type (if any)
-
----
-
-## 11) Milestones + validation matrices
-
-### M0 — Repo + tooling
-Deliverables:
-- repo layout, pyproject, CI placeholders
-Validation:
-- `ruff check .` passes
-- `mypy tensormux` passes (reasonable strictness)
-- `pytest -q` passes
-
-Expected outcome:
-- clean dev loop, fast iteration
-
----
-
-### M1 — OpenAI API non-stream passthrough
-Deliverables:
-- `/v1/chat/completions` non-stream works
-- `x-request-id` and `x-tensormux-backend` response headers
-
-Validation commands:
 ```bash
-curl -i http://localhost:8080/v1/chat/completions   -H "Content-Type: application/json"   -d '{"model":"demo-model","messages":[{"role":"user","content":"hi"}]}'
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+ruff check .
+mypy tensormux
+pytest -v
 ```
 
-Expected outcome:
-- 200 JSON
-- headers include backend + request id
+### Run with Docker Compose (mock backends)
 
----
-
-### M2 — Streaming passthrough
-Deliverables:
-- `stream=true` SSE passthrough
-- cancellation closes upstream
-
-Validation commands:
-```bash
-curl -N http://localhost:8080/v1/chat/completions   -H "Content-Type: application/json"   -d '{"model":"demo-model","messages":[{"role":"user","content":"count to 20"}],"stream":true}'
-```
-
-Expected outcome:
-- multiple SSE `data:` chunks streamed
-- Ctrl+C does not leave hung upstream connection
-
----
-
-### M3 — Registry + Router strategies
-Deliverables:
-- registry stores inflight + EWMA + health
-- strategies implemented (weighted RR, least inflight, EWMA)
-
-Validation:
-- with two backends (fast/slow), EWMA or least_inflight should prefer fast backend
-
-Expected outcome:
-- consistent routing decisions with visible header
-
----
-
-### M4 — Health checks + failover
-Deliverables:
-- active loop + passive failures
-- exclude unhealthy backends
-- 503 if none available
-
-Validation:
-- stop a backend container; gateway routes to remaining backend without manual changes
-
-Expected outcome:
-- automatic failover
-
----
-
-### M5 — Metrics + logs
-Deliverables:
-- `/metrics` and JSONL logs
-
-Validation commands:
-```bash
-curl -s http://localhost:8080/metrics | grep tensormux_requests_total
-tail -n 5 ./tensormux_requests.jsonl
-```
-
-Expected outcome:
-- counters increment
-- logs show backend, latency, status
-
----
-
-### M6 — Docker compose demo + docs
-Deliverables:
-- docker compose includes:
-  - tensormux
-  - backend-fast
-  - backend-slow
-  - optional backend-flaky
-- README quickstart
-- `examples/` curl scripts
-
-Validation:
 ```bash
 docker compose up --build
 ```
 
-Expected outcome:
-- anyone can reproduce routing + streaming + failover + metrics in < 10 minutes
+---
+
+## Real backend validation on RTX 4070 (required before OSS release)
+
+Goal: Replace mock backends with at least one real engine backend and prove Tensormux works end-to-end.
+
+### Step 1: Start vLLM OpenAI server (GPU)
+
+```bash
+export HF_TOKEN="YOUR_TOKEN"
+docker run --rm --gpus all --ipc=host \
+  -p 8000:8000 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  -e HF_TOKEN=$HF_TOKEN \
+  vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --dtype half \
+  --max-model-len 4096
+```
+
+Sanity check:
+
+```bash
+curl -s http://localhost:8000/v1/models | jq .
+```
+
+### Step 2: Optionally start SGLang OpenAI-compatible server (GPU)
+
+```bash
+docker run --rm --gpus all --ipc=host --shm-size 32g \
+  -p 30000:30000 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  lmsysorg/sglang:latest \
+  python3 -m sglang.launch_server \
+    --model-path Qwen/Qwen3-0.6B \
+    --host 0.0.0.0 \
+    --port 30000
+```
+
+Sanity check:
+
+```bash
+curl -s http://localhost:30000/v1/models | jq .
+```
+
+### Step 3: Configure Tensormux to point to real backends
+
+Create `configs/local_gpu.yaml`:
+
+```yaml
+gateway:
+  host: "0.0.0.0"
+  port: 8080
+  strategy: "least_inflight"
+
+health:
+  interval_s: 5
+  timeout_s: 2
+  fail_threshold: 2
+  success_threshold: 1
+
+logging:
+  level: "INFO"
+  jsonl_path: "./tensormux_requests.jsonl"
+
+backends:
+  - name: "vllm-4070"
+    url: "http://localhost:8000"
+    engine: "vllm"
+    model: "Qwen/Qwen3-0.6B"
+    weight: 1
+    tags: ["gpu", "vllm"]
+    health_endpoint: "/v1/models"
+```
+
+If running both vLLM and SGLang:
+
+```yaml
+backends:
+  - name: "vllm-4070"
+    url: "http://localhost:8000"
+    engine: "vllm"
+    model: "Qwen/Qwen3-0.6B"
+    weight: 1
+    tags: ["gpu", "vllm"]
+    health_endpoint: "/v1/models"
+
+  - name: "sglang-4070"
+    url: "http://localhost:30000"
+    engine: "sglang"
+    model: "Qwen/Qwen3-0.6B"
+    weight: 1
+    tags: ["gpu", "sglang"]
+    health_endpoint: "/v1/models"
+```
+
+Run Tensormux:
+
+```bash
+TENSORMUX_CONFIG=configs/local_gpu.yaml uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080
+```
+
+Sanity check:
+
+```bash
+curl -s http://localhost:8080/v1/models | jq .
+```
+
+### Step 4: Non-streaming request through Tensormux
+
+```bash
+curl -s -D /tmp/headers.txt http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"Qwen/Qwen3-0.6B",
+    "messages":[{"role":"user","content":"Say hi in one sentence."}],
+    "temperature":0.2
+  }' | jq -r '.choices[0].message.content'
+
+cat /tmp/headers.txt | grep -i x-tensormux
+```
+
+Acceptance:
+
+* HTTP 200
+* `x-tensormux-backend` present
+* Valid OpenAI chat completion JSON
+
+### Step 5: Streaming passthrough (SSE)
+
+```bash
+curl -N http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"Qwen/Qwen3-0.6B",
+    "messages":[{"role":"user","content":"Count 1 to 20."}],
+    "stream": true
+  }'
+```
+
+Acceptance:
+
+* incremental `data:` lines arrive continuously
+* ends with `data: [DONE]`
+* no buffering behavior visible
+
+### Step 6: Failover against real backend (single GPU friendly)
+
+If you only have one GPU, simulate a second tier backend using a delay proxy.
+
+Create `delay_proxy.py`:
+
+```python
+import asyncio
+from fastapi import FastAPI, Request, Response
+import httpx
+
+UPSTREAM = "http://localhost:8000"
+DELAY_MS = 250
+
+app = FastAPI()
+client = httpx.AsyncClient(timeout=None)
+
+@app.api_route("/{path:path}", methods=["GET","POST","PUT","DELETE","PATCH"])
+async def proxy(path: str, request: Request):
+    await asyncio.sleep(DELAY_MS / 1000.0)
+    url = f"{UPSTREAM}/{path}"
+    headers = dict(request.headers)
+    body = await request.body()
+    resp = await client.request(request.method, url, content=body, headers=headers)
+    return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
+```
+
+Run it:
+
+```bash
+uvicorn delay_proxy:app --host 0.0.0.0 --port 9002
+```
+
+Update config to include both backends:
+
+```yaml
+backends:
+  - name: "vllm-fast"
+    url: "http://localhost:8000"
+    engine: "vllm"
+    model: "Qwen/Qwen3-0.6B"
+    weight: 1
+    tags: ["fast"]
+    health_endpoint: "/v1/models"
+
+  - name: "vllm-slow-tier"
+    url: "http://localhost:9002"
+    engine: "vllm"
+    model: "Qwen/Qwen3-0.6B"
+    weight: 1
+    tags: ["cheap"]
+    health_endpoint: "/v1/models"
+```
+
+Failover test:
+
+* Stop vLLM container
+* Verify routing goes to slow-tier proxy, or returns 503 if both are down
+
+### Step 7: Metrics verification
+
+```bash
+curl -s http://localhost:8080/metrics | grep tensormux | head -n 50
+```
+
+Acceptance:
+
+* request counters increment
+* backend health reflects failover
+* latency histogram buckets populate
+
+### Step 8: Concurrency smoke test
+
+```bash
+hey -n 50 -c 10 -m POST \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"One short line."}]}' \
+  http://localhost:8080/v1/chat/completions
+```
+
+Acceptance:
+
+* gateway stays stable
+* inflight gauge spikes and returns to zero
+* routing distributes when there is contention (with 2 backends configured)
 
 ---
 
-### M7 — YC demo + optional UI
-Required demo (terminal-only acceptable):
-- show config
-- send requests and display backend header
-- show streaming
-- kill backend and show failover
-- show `/metrics`
+## Test suite requirements (CI gates)
 
-Optional UI (only if time remains):
-- `/ui` static page polling `/tensormux/status`
-- show backend health + inflight + EWMA + last N requests
+### Must pass locally and in CI
 
-Expected outcome:
-- YC partners understand value instantly
+```bash
+ruff check .
+mypy tensormux
+pytest -q
+```
 
----
+### GPU tests are manual, not CI
 
-## 12) Demo script (YC-ready)
-
-Terminal demo steps:
-1) `docker compose up --build`
-2) show `config.yaml` with two backends + strategy
-3) run non-stream request:
-   - show `x-tensormux-backend`
-4) run stream request:
-   - show SSE chunks
-5) kill backend-fast:
-   - `docker stop backend-fast`
-6) run request again:
-   - show it routes to backend-slow
-7) `curl /metrics` and show counters
-
-If UI exists:
-- open `http://localhost:8080/ui` and show health + routing updates for 10 seconds
+CI may not have GPUs. Keep GPU tests as a documented manual suite. Keep mock integration tests in CI.
 
 ---
 
-## 13) Rules to follow while coding
+## Release checklist (OSS v0.1.0)
 
-- Keep v0.1 extremely small and reliable.
-- Streaming correctness > features.
-- Every routing decision must be observable via headers + logs.
-- No GPU requirement in demo.
-- Avoid introducing Kubernetes dependency.
-- Keep modules clean so a future control plane can replace in-process config.
-- Do not implement fancy policy language early.
-
----
-
-## 14) Common pitfalls to avoid
-
-- Buffering SSE output (kills perceived latency)
-- httpx timeout defaults breaking long streams
-- Health check flapping without hysteresis
-- No “why did it route here” visibility
-- Demo that downloads models or needs CUDA
-- Overbuilding UI at the expense of correctness
+1. Repo is public, link works, README is clean
+2. `LICENSE` present
+3. `CHANGELOG.md` or GitHub release notes present
+4. `configs/` has at least:
+   * local mock demo config
+   * local_gpu vLLM demo config
+   * dual-backend demo config (real + delay proxy)
+5. README has a "10-minute quickstart" and "What this is" section
+6. Tag and release: `v0.1.0`
 
 ---
 
-## 15) Optional UI plan (only after v0.1 passes)
+## Post-release plan (responding to inference critique)
 
-Minimal UI approach:
-- serve static `ui/index.html`
-- JS polls `/tensormux/status` every 1s
-- display:
-  - backend list: healthy, inflight, ewma
-  - recent requests (kept in memory ring buffer)
-  - current strategy + config summary
+### First inference-aware upgrade: token-aware routing
 
-No React build pipeline for OSS v0.1.
+Add a routing strategy that scores requests based on estimated cost:
 
----
+* Use prompt length estimate + `max_tokens`
+* Maintain per-backend EWMA for ms per token
+* Route to backend minimizing estimated completion time
 
-## 16) What to do with diagrams
+Validation goal:
 
-Diagrams are the reference truth for architecture and flows.
-Claude should look at:
-- Component Architecture diagram (gateway, proxy, router, registry, health, metrics)
-- Request Flow diagram (stream/non-stream)
-- Health Checking & Failover diagram
-- Config to Runtime Mapping diagram
+* Mixed workloads (short vs long generations)
+* Show improved p95 latency or fewer tail spikes vs plain EWMA latency
 
-Path (user local):
-`/Users/krishgupta/Desktop/Final_Work/Tensormux-v1/diagrams`
+### Second upgrade: backend telemetry adapters
 
-In repo, keep:
-`./diagrams/` and reference from README.
+Create a backend adapter interface to ingest:
+
+* Engine metrics (queue depth, throughput where possible)
+* GPU memory signals via NVML
+
+Then route using a capacity-aware score.
 
 ---
 
-## 17) Definition of “ship” for OSS v0.1
+## Contribution and code style
 
-Ship when:
-- M0 through M6 all pass validation
-- Demo is reproducible on a clean machine
-- README is accurate
-- Tag release `v0.1.0` and publish minimal changelog
-
-Nice-to-have:
-- M7 UI and demo recording
+* Keep modules small and testable
+* Prefer typed interfaces (Pydantic models, mypy clean)
+* Add tests for each routing strategy and failure mode
+* Avoid feature creep in OSS v0.1, ship and iterate
