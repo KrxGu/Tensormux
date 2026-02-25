@@ -109,7 +109,7 @@ To run Tensormux against a real inference backend (e.g., vLLM on an NVIDIA GPU),
 docker run --rm --gpus all --ipc=host -p 8000:8000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   vllm/vllm-openai:latest \
-  --model Qwen/Qwen3-0.6B --dtype half --max-model-len 4096
+  --model Qwen/Qwen2.5-0.5B-Instruct --dtype half --max-model-len 4096
 
 # 2. Start Tensormux with the GPU config
 TENSORMUX_CONFIG=configs/local_gpu.yaml uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080
@@ -117,7 +117,7 @@ TENSORMUX_CONFIG=configs/local_gpu.yaml uvicorn tensormux.api.main:app --host 0.
 # 3. Send a request
 curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Say hi in one sentence."}]}'
+  -d '{"model":"Qwen/Qwen2.5-0.5B-Instruct","messages":[{"role":"user","content":"Say hi in one sentence."}]}'
 ```
 
 For dual-backend failover testing with a single GPU, see `configs/dual_backend.yaml` and `delay_proxy.py`.

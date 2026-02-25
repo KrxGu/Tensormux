@@ -5,7 +5,7 @@
 #   docker run --rm --gpus all --ipc=host -p 8000:8000 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
 #     vllm/vllm-openai:latest \
-#     --model Qwen/Qwen3-0.6B --dtype half --max-model-len 4096
+#     --model Qwen/Qwen2.5-0.5B-Instruct --dtype half --max-model-len 4096
 #
 # Start delay proxy:
 #   uvicorn delay_proxy:app --host 0.0.0.0 --port 9002
@@ -32,7 +32,7 @@ backends:
   - name: "vllm-fast"
     url: "http://localhost:8000"
     engine: "vllm"
-    model: "Qwen/Qwen3-0.6B"
+    model: "Qwen/Qwen2.5-0.5B-Instruct"
     weight: 1
     tags: ["fast"]
     health_endpoint: "/v1/models"
@@ -40,7 +40,7 @@ backends:
   - name: "vllm-slow-tier"
     url: "http://localhost:9002"
     engine: "vllm"
-    model: "Qwen/Qwen3-0.6B"
+    model: "Qwen/Qwen2.5-0.5B-Instruct"
     weight: 1
     tags: ["cheap"]
     health_endpoint: "/v1/models"

@@ -1,11 +1,11 @@
 # Single GPU backend configuration for Tensormux
-# Requires vLLM running on localhost:8000 with Qwen/Qwen3-0.6B
+# Requires vLLM running on localhost:8000 with Qwen/Qwen2.5-0.5B-Instruct
 #
 # Start vLLM:
 #   docker run --rm --gpus all --ipc=host -p 8000:8000 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
 #     vllm/vllm-openai:latest \
-#     --model Qwen/Qwen3-0.6B --dtype half --max-model-len 4096
+#     --model Qwen/Qwen2.5-0.5B-Instruct --dtype half --max-model-len 4096
 #
 # Start Tensormux:
 #   TENSORMUX_CONFIG=configs/local_gpu.yaml uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080
@@ -29,7 +29,7 @@ backends:
   - name: "vllm-4070"
     url: "http://localhost:8000"
     engine: "vllm"
-    model: "Qwen/Qwen3-0.6B"
+    model: "Qwen/Qwen2.5-0.5B-Instruct"
     weight: 1
     tags: ["gpu", "vllm"]
     health_endpoint: "/v1/models"
