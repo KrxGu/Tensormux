@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "tensormux"
 version = "0.1.0"
 description = "OpenAI-compatible inference gateway with routing, health-based failover, and observability"
+license = {text = "MIT"}
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "fastapi[standard]",

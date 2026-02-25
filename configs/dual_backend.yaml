@@ -1,0 +1,46 @@
+# Dual backend configuration for single-GPU failover testing
+# Uses vLLM directly (fast) + delay proxy (slow tier) on the same GPU
+#
+# Start vLLM:
+#   docker run --rm --gpus all --ipc=host -p 8000:8000 \
+#     -v ~/.cache/huggingface:/root/.cache/huggingface \
+#     vllm/vllm-openai:latest \
+#     --model Qwen/Qwen3-0.6B --dtype half --max-model-len 4096
+#
+# Start delay proxy:
+#   uvicorn delay_proxy:app --host 0.0.0.0 --port 9002
+#
+# Start Tensormux:
+#   TENSORMUX_CONFIG=configs/dual_backend.yaml uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080
+
+gateway:
+  host: "0.0.0.0"
+  port: 8080
+  strategy: "least_inflight"
+
+health:
+  interval_s: 5
+  timeout_s: 2
+  fail_threshold: 2
+  success_threshold: 1
+
+logging:
+  level: "INFO"
+  jsonl_path: "./tensormux_requests.jsonl"
+
+backends:
+  - name: "vllm-fast"
+    url: "http://localhost:8000"
+    engine: "vllm"
+    model: "Qwen/Qwen3-0.6B"
+    weight: 1
+    tags: ["fast"]
+    health_endpoint: "/v1/models"
+
+  - name: "vllm-slow-tier"
+    url: "http://localhost:9002"
+    engine: "vllm"
+    model: "Qwen/Qwen3-0.6B"
+    weight: 1
+    tags: ["cheap"]
+    health_endpoint: "/v1/models"

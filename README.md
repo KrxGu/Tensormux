@@ -2,7 +2,16 @@
 
 **OpenAI-compatible inference gateway** with routing, health-based failover, and observability.
 
-Tensormux sits between your applications and multiple inference backends (vLLM, SGLang, TensorRT-LLM), providing a single API endpoint with automatic routing, health checking, and metrics.
+## What This Is
+
+Tensormux is an **L7 inference gateway** that sits between your applications and multiple inference backends (vLLM, SGLang, TensorRT-LLM, or any OpenAI-compatible server). It provides:
+
+- A single API endpoint that routes to the best available backend
+- Automatic health checking and failover when backends go down
+- Streaming SSE passthrough with minimal overhead
+- Prometheus metrics and structured audit logs for production visibility
+
+Tensormux is **not** an inference engine — it doesn't manage KV cache, batching, or GPU scheduling. It's the routing and reliability layer that makes your existing backends production-ready.
 
 ## Features
 
@@ -14,7 +23,14 @@ Tensormux sits between your applications and multiple inference backends (vLLM, 
 - **JSONL request logs** — every request logged with backend, latency, status
 - **Live dashboard** — real-time UI showing backend health, stats, and recent requests
 
-## Quickstart (Docker)
+## 10-Minute Quickstart
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) installed
+- Ports 8080, 9001, 9002 available
+
+### Start the demo
 
 ```bash
 git clone https://github.com/KrxGu/Tensormux.git && cd Tensormux
@@ -84,6 +100,28 @@ docker start tensormux-v1-backend-fast-1
 # Wait ~5s, fast is healthy again
 ```
 
+## Real GPU Backend
+
+To run Tensormux against a real inference backend (e.g., vLLM on an NVIDIA GPU), use the provided GPU config:
+
+```bash
+# 1. Start vLLM with a small model
+docker run --rm --gpus all --ipc=host -p 8000:8000 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B --dtype half --max-model-len 4096
+
+# 2. Start Tensormux with the GPU config
+TENSORMUX_CONFIG=configs/local_gpu.yaml uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080
+
+# 3. Send a request
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Say hi in one sentence."}]}'
+```
+
+For dual-backend failover testing with a single GPU, see `configs/dual_backend.yaml` and `delay_proxy.py`.
+
 ## Local Development
 
 ```bash
@@ -101,7 +139,7 @@ uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080 --reload
 
 ## Configuration
 
-Create a `config.yaml`:
+Create a `config.yaml` (or use one from the `configs/` directory):
 
 ```yaml
 gateway:
@@ -136,6 +174,11 @@ backends:
     tags: ["cheap"]
     health_endpoint: "/v1/models"
 ```
+
+Pre-built configs are available in the `configs/` directory:
+- `configs/mock_demo.yaml` — mock backends for Docker Compose demo
+- `configs/local_gpu.yaml` — single vLLM backend on GPU
+- `configs/dual_backend.yaml` — dual-backend setup for failover testing
 
 ## API Reference
 
@@ -172,4 +215,4 @@ See `diagrams/` for detailed architecture and flow diagrams.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
