@@ -102,14 +102,12 @@ docker start tensormux-v1-backend-fast-1
 
 ## Real GPU Backend
 
-To run Tensormux against a real inference backend (e.g., vLLM on an NVIDIA GPU), use the provided GPU config:
+Tensormux works with any OpenAI-compatible backend. The easiest way to test with a real GPU is [Ollama](https://ollama.com/):
 
 ```bash
-# 1. Start vLLM with a small model
-docker run --rm --gpus all --ipc=host -p 8000:8000 \
-  -v ~/.cache/huggingface:/root/.cache/huggingface \
-  vllm/vllm-openai:latest \
-  --model Qwen/Qwen2.5-0.5B-Instruct --dtype half --max-model-len 4096
+# 1. Install Ollama and pull a small model
+ollama pull qwen2.5:0.5b
+ollama serve
 
 # 2. Start Tensormux with the GPU config
 TENSORMUX_CONFIG=configs/local_gpu.yaml uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080
@@ -117,8 +115,10 @@ TENSORMUX_CONFIG=configs/local_gpu.yaml uvicorn tensormux.api.main:app --host 0.
 # 3. Send a request
 curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2.5-0.5B-Instruct","messages":[{"role":"user","content":"Say hi in one sentence."}]}'
+  -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"Say hi in one sentence."}]}'
 ```
+
+For vLLM, SGLang, or TensorRT-LLM backends, update `configs/local_gpu.yaml` with the backend URL and model name.
 
 For dual-backend failover testing with a single GPU, see `configs/dual_backend.yaml` and `delay_proxy.py`.
 
