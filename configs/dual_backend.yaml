@@ -1,14 +1,12 @@
 # Dual backend configuration for single-GPU failover testing
-# Uses vLLM directly (fast) + delay proxy (slow tier) on the same GPU
+# Uses Ollama directly (fast) + delay proxy (slow tier) on the same GPU
 #
-# Start vLLM:
-#   docker run --rm --gpus all --ipc=host -p 8000:8000 \
-#     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     vllm/vllm-openai:latest \
-#     --model Qwen/Qwen3-0.6B --dtype half --max-model-len 4096
+# Start Ollama:
+#   ollama pull qwen2.5:0.5b
+#   ollama serve  (or launch from Start Menu)
 #
 # Start delay proxy:
-#   uvicorn delay_proxy:app --host 0.0.0.0 --port 9002
+#   UPSTREAM_URL=http://localhost:11434 uvicorn delay_proxy:app --host 0.0.0.0 --port 9002
 #
 # Start Tensormux:
 #   TENSORMUX_CONFIG=configs/dual_backend.yaml uvicorn tensormux.api.main:app --host 0.0.0.0 --port 8080
@@ -29,18 +27,18 @@ logging:
   jsonl_path: "./tensormux_requests.jsonl"
 
 backends:
-  - name: "vllm-fast"
-    url: "http://localhost:8000"
-    engine: "vllm"
-    model: "Qwen/Qwen3-0.6B"
+  - name: "ollama-fast"
+    url: "http://localhost:11434"
+    engine: "ollama"
+    model: "qwen2.5:0.5b"
     weight: 1
     tags: ["fast"]
     health_endpoint: "/v1/models"
 
-  - name: "vllm-slow-tier"
+  - name: "ollama-slow-tier"
     url: "http://localhost:9002"
-    engine: "vllm"
-    model: "Qwen/Qwen3-0.6B"
+    engine: "ollama"
+    model: "qwen2.5:0.5b"
     weight: 1
     tags: ["cheap"]
     health_endpoint: "/v1/models"
