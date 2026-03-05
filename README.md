@@ -177,8 +177,8 @@ backends:
 
 Pre-built configs are available in the `configs/` directory:
 - `configs/mock_demo.yaml` — mock backends for Docker Compose demo
-- `configs/local_gpu.yaml` — single vLLM backend on GPU
-- `configs/dual_backend.yaml` — dual-backend setup for failover testing
+- `configs/local_gpu.yaml` — single GPU backend (Ollama)
+- `configs/dual_backend.yaml` — dual-backend failover testing with delay proxy
 
 ## API Reference
 

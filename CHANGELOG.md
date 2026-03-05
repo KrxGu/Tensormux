@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.0] - 2025-06-01
+## [0.1.0] - 2026-03-05
 
 ### Added
 
@@ -16,4 +16,5 @@ All notable changes to this project will be documented in this file.
 - **Docker Compose demo** — one-command setup with mock backends for quick evaluation
 - **YAML configuration** — gateway, health, logging, and backend settings in a single config file
 - **Custom response headers** — `x-request-id` and `x-tensormux-backend` on every proxied response
-- **Example configs** — mock demo, single GPU (vLLM), and dual-backend (failover testing) configurations
+- **Example configs** — mock demo, single GPU (Ollama/vLLM), and dual-backend (failover testing) configurations
+- **Delay proxy** — `delay_proxy.py` for single-GPU failover testing with configurable latency

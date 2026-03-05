@@ -165,7 +165,12 @@ async def chat_completions(request: Request) -> Response:
                 nonlocal status_code, error_type
                 try:
                     async for chunk in original_body_iterator:
-                        yield chunk if isinstance(chunk, bytes) else chunk.encode() if isinstance(chunk, str) else bytes(chunk)
+                        if isinstance(chunk, bytes):
+                            yield chunk
+                        elif isinstance(chunk, str):
+                            yield chunk.encode()
+                        else:
+                            yield bytes(chunk)
                 except httpx.RequestError as exc:
                     _health_checker.check_passive_failure(backend)
                     error_type = type(exc).__name__
