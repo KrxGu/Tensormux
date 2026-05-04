@@ -2,7 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.0] - Unreleased
+## [0.2.1] - Unreleased
+
+### Added
+
+- **Telemetry adapters** (`tensormux/telemetry/`) — backend-side capacity signals (queue depth, GPU memory, tokens/sec) feed into the router. New `BackendTelemetry` dataclass + `TelemetryAdapter` ABC; ships with a generic `JsonTelemetryAdapter` that polls a backend-provided URL returning `{"queue_depth": int?, "tokens_per_sec": float?, "gpu_mem_util": float?}` (all optional).
+- **`TelemetryPoller`** — async background task per Tensormux instance, polling each opted-in backend at a configurable interval. Wired in alongside `HealthChecker` in lifespan.
+- **Capacity-aware penalties on `token_aware`** — score now adds `(queue_depth or 0) * queue_weight + (gpu_mem_util or 0) * mem_weight`. Defaults `queue_weight=0.0`, `mem_weight=0.0` keep existing behavior unchanged unless an operator opts in.
+- **Per-backend telemetry config** — new `BackendConfig.telemetry` (optional): `{type: json, url: ..., interval_s: 5.0, timeout_s: 2.0}`.
+- **Status + UI surface** — `/tensormux/status` now exposes `queue_depth`, `tokens_per_sec`, `gpu_mem_util` per backend. `/ui` renders these on each backend card when present, so an operator can see *"A is healthy but capacity-penalized"* at a glance.
+
+### Architectural invariant
+
+**Health gates eligibility; telemetry tilts preference.** Telemetry fetch failures must never affect a backend's health state — they clear that backend's signals and the router falls back to its base scoring with no capacity penalty. This is enforced in `TelemetryPoller._poll_one` (catches all adapter errors, calls `clear_telemetry()`, never touches health counters) and covered by an explicit negative test.
+
+### Validated by Milestone C DoD test
+
+`test_dod_healthy_but_overloaded_backend_is_avoided` — both backends report healthy; backend A reports `queue_depth=100`, backend B reports `queue_depth=0`; with `queue_weight` tuned, every new request routes to B; `/tensormux/status` continues to show both as healthy with their queue_depth values exposed.
+
+## [0.2.0] - 2026-05-04
 
 ### Added
 

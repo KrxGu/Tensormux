@@ -329,6 +329,137 @@ async def test_token_aware_avoids_busy_backend(token_aware_client):
     assert resp.headers["x-tensormux-backend"] == "slow-backend"
 
 
+# ── Milestone C: telemetry / capacity-aware routing ─────────────────────
+
+
+@pytest.fixture
+async def capacity_aware_client():
+    """Re-init the gateway with token_aware + capacity weights tuned + 2 backends."""
+    global _app_initialized
+    cfg = TensormuxConfig.from_dict({
+        "gateway": {
+            "host": "0.0.0.0",
+            "port": 8080,
+            "strategy": "token_aware",
+            "prefill_weight": 1.0,
+            "decode_weight": 4.0,
+            "default_max_tokens": 256,
+            "queue_weight": 1000.0,  # tuned hot enough that queue=100 dominates
+            "mem_weight": 0.0,
+        },
+        "health": {"interval_s": 60, "timeout_s": 2, "fail_threshold": 2, "success_threshold": 1},
+        "logging": {"level": "DEBUG", "jsonl_path": _jsonl_path},
+        "backends": [
+            {
+                "name": "backend-a",
+                "url": _mock_url,
+                "engine": "mock",
+                "model": "demo-model",
+                "weight": 1,
+                "tags": [],
+                "health_endpoint": "/v1/models",
+            },
+            {
+                "name": "backend-b",
+                "url": _mock_url,
+                "engine": "mock",
+                "model": "demo-model",
+                "weight": 1,
+                "tags": [],
+                "health_endpoint": "/v1/models",
+            },
+        ],
+    })
+    await init_app(cfg, start_health=False)
+    _app_initialized = True
+
+    transport = httpx.ASGITransport(app=tensormux_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.mark.asyncio
+async def test_dod_healthy_but_overloaded_backend_is_avoided(capacity_aware_client):
+    """Milestone C DoD: a backend that is healthy but reports a heavy queue
+    via telemetry must lose new requests to its idle peer. Telemetry tilts
+    preference; health gates eligibility — both must show 'healthy'."""
+    from tensormux.api.main import _registry
+    from tensormux.telemetry.base import BackendTelemetry
+
+    assert _registry is not None
+    a = _registry.get("backend-a")
+    b = _registry.get("backend-b")
+    assert a is not None and b is not None
+
+    # Both equal under the base score: same URL, no inflight, identical EWMA.
+    a.ewma_latency_ms = 50.0
+    b.ewma_latency_ms = 50.0
+    a.set_telemetry(BackendTelemetry(queue_depth=100))
+    b.set_telemetry(BackendTelemetry(queue_depth=0))
+
+    # Send a handful of requests; all must pick the idle backend.
+    for _ in range(5):
+        resp = await capacity_aware_client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "demo-model",
+                "messages": [{"role": "user", "content": "route me"}],
+                "max_tokens": 32,
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers["x-tensormux-backend"] == "backend-b"
+
+    # Status must report both as healthy AND surface the queue_depth signal,
+    # so an operator can see "A is healthy but capacity-penalized".
+    status = (await capacity_aware_client.get("/tensormux/status")).json()
+    by_name = {x["name"]: x for x in status["backends"]}
+    assert by_name["backend-a"]["healthy"] is True
+    assert by_name["backend-b"]["healthy"] is True
+    assert by_name["backend-a"]["queue_depth"] == 100
+    assert by_name["backend-b"]["queue_depth"] == 0
+
+
+@pytest.mark.asyncio
+async def test_clearing_telemetry_restores_normal_routing(capacity_aware_client):
+    """If telemetry is removed (e.g. fetch starts failing), routing must fall
+    back to base scoring with no capacity penalty — backends remain eligible."""
+    from tensormux.api.main import _registry
+    from tensormux.telemetry.base import BackendTelemetry
+
+    assert _registry is not None
+    a = _registry.get("backend-a")
+    b = _registry.get("backend-b")
+    assert a is not None and b is not None
+    a.ewma_latency_ms = 50.0
+    b.ewma_latency_ms = 50.0
+    a.set_telemetry(BackendTelemetry(queue_depth=100))
+    b.set_telemetry(BackendTelemetry(queue_depth=0))
+
+    # With telemetry, b wins.
+    r = await capacity_aware_client.post(
+        "/v1/chat/completions",
+        json={"model": "demo-model", "messages": [{"role": "user", "content": "x"}], "max_tokens": 32},
+    )
+    assert r.headers["x-tensormux-backend"] == "backend-b"
+
+    # Now drop telemetry (simulates the poller's clear-on-failure path).
+    a.clear_telemetry()
+    b.clear_telemetry()
+    assert a.healthy is True and b.healthy is True  # health untouched
+
+    # Reset cost-inflight so we get a clean tie scenario.
+    a.inflight_cost = 0.0
+    b.inflight_cost = 0.0
+
+    # Without telemetry, no penalty -> tie on base score -> alphabetical winner.
+    r2 = await capacity_aware_client.post(
+        "/v1/chat/completions",
+        json={"model": "demo-model", "messages": [{"role": "user", "content": "x"}], "max_tokens": 32},
+    )
+    assert r2.headers["x-tensormux-backend"] == "backend-a"
+
+
 @pytest.mark.asyncio
 async def test_token_aware_decrements_inflight_cost_after_request(token_aware_client):
     """inflight_cost must return to its pre-request value once the response completes."""

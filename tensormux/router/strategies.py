@@ -90,21 +90,26 @@ class EWMALatency(RoutingStrategy):
 
 
 class TokenAware(RoutingStrategy):
-    """Route by predicted completion time of a cost-weighted backend queue.
+    """Route by predicted completion time of a cost-weighted backend queue,
+    optionally penalized by backend telemetry signals.
 
     For each candidate the score is::
 
-        score = (backend.inflight_cost + request_cost) * latency_factor
+        base    = (backend.inflight_cost + request_cost) * latency_factor
+        penalty = (queue_depth or 0) * queue_weight
+                + (gpu_mem_util or 0) * mem_weight
+        score   = base + penalty
 
-    where `latency_factor` is the backend's EWMA per-request latency (or 1.0 if
-    the backend has no history yet, so unproven backends aren't trivially
-    preferred). Ties are broken by current inflight count and then backend name
-    so selection is deterministic.
+    where ``latency_factor`` is the backend's EWMA per-request latency (or 1.0
+    if the backend has no history yet, so unproven backends aren't trivially
+    preferred). When ``queue_weight`` and ``mem_weight`` are 0 (the default),
+    or when telemetry is absent, the penalty term is 0 and behavior matches the
+    original token_aware strategy. Ties are broken by inflight count and then
+    backend name for determinism.
 
-    `prefill_weight` and `decode_weight` are not consumed here directly — they
-    are baked into `request_ctx.cost` by the API layer — but they're carried on
-    the strategy for diagnostics and so future iterations can adjust scoring
-    without re-plumbing the request path.
+    ``prefill_weight`` and ``decode_weight`` are baked into ``request_ctx.cost``
+    by the API layer, but they're carried here for diagnostics and so future
+    iterations can adjust scoring without re-plumbing the request path.
     """
 
     def __init__(
@@ -112,10 +117,22 @@ class TokenAware(RoutingStrategy):
         prefill_weight: float = 1.0,
         decode_weight: float = 4.0,
         default_max_tokens: int = 256,
+        queue_weight: float = 0.0,
+        mem_weight: float = 0.0,
     ) -> None:
         self.prefill_weight = prefill_weight
         self.decode_weight = decode_weight
         self.default_max_tokens = default_max_tokens
+        self.queue_weight = queue_weight
+        self.mem_weight = mem_weight
+
+    def _penalty(self, b: Backend) -> float:
+        p = 0.0
+        if self.queue_weight and b.queue_depth is not None:
+            p += b.queue_depth * self.queue_weight
+        if self.mem_weight and b.gpu_mem_util is not None:
+            p += b.gpu_mem_util * self.mem_weight
+        return p
 
     def select(
         self,
@@ -133,7 +150,8 @@ class TokenAware(RoutingStrategy):
 
         def score(b: Backend) -> tuple[float, int, str]:
             latency_factor = b.ewma_latency_ms if b.ewma_latency_ms > 0 else 1.0
-            return ((b.inflight_cost + cost) * latency_factor, b.inflight, b.name)
+            base = (b.inflight_cost + cost) * latency_factor
+            return (base + self._penalty(b), b.inflight, b.name)
 
         return min(backends, key=score)
 
@@ -144,12 +162,16 @@ def create_strategy(
     prefill_weight: float = 1.0,
     decode_weight: float = 4.0,
     default_max_tokens: int = 256,
+    queue_weight: float = 0.0,
+    mem_weight: float = 0.0,
 ) -> RoutingStrategy:
     if name == "token_aware":
         return TokenAware(
             prefill_weight=prefill_weight,
             decode_weight=decode_weight,
             default_max_tokens=default_max_tokens,
+            queue_weight=queue_weight,
+            mem_weight=mem_weight,
         )
     strategies: dict[str, type[RoutingStrategy]] = {
         "weighted_round_robin": WeightedRoundRobin,

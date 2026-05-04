@@ -28,6 +28,7 @@ from tensormux.proxy.forward import close_client, forward_get, forward_non_strea
 from tensormux.registry.backend import Backend, BackendRegistry
 from tensormux.router.strategies import RequestContext, RoutingStrategy, create_strategy
 from tensormux.router.token_estimator import estimate_prompt_tokens, extract_max_tokens
+from tensormux.telemetry import JsonTelemetryAdapter, TelemetryAdapter, TelemetryPoller
 from tensormux.util.helpers import generate_request_id, now_ms
 
 logger = logging.getLogger("tensormux")
@@ -36,6 +37,7 @@ logger = logging.getLogger("tensormux")
 _registry: Optional[BackendRegistry] = None
 _strategy: Optional[RoutingStrategy] = None
 _health_checker: Optional[HealthChecker] = None
+_telemetry_poller: Optional[TelemetryPoller] = None
 _request_logger: Optional[RequestLogger] = None
 _config: Optional[TensormuxConfig] = None
 
@@ -68,7 +70,7 @@ def _load_config() -> TensormuxConfig:
 
 async def init_app(config: Optional[TensormuxConfig] = None, start_health: bool = True) -> None:
     """Initialize app state. Called by lifespan or directly in tests."""
-    global _registry, _strategy, _health_checker, _request_logger, _config
+    global _registry, _strategy, _health_checker, _telemetry_poller, _request_logger, _config
 
     _config = config or _load_config()
 
@@ -86,6 +88,8 @@ async def init_app(config: Optional[TensormuxConfig] = None, start_health: bool 
         prefill_weight=_config.gateway.prefill_weight,
         decode_weight=_config.gateway.decode_weight,
         default_max_tokens=_config.gateway.default_max_tokens,
+        queue_weight=_config.gateway.queue_weight,
+        mem_weight=_config.gateway.mem_weight,
     )
     logger.info("Routing strategy: %s", _config.gateway.strategy)
 
@@ -97,6 +101,27 @@ async def init_app(config: Optional[TensormuxConfig] = None, start_health: bool 
     if start_health:
         await _health_checker.start()
 
+    # Telemetry adapters: one per backend that opted in via its config block.
+    # Failures here are isolated per backend and do not affect health.
+    adapters: Dict[str, TelemetryAdapter] = {}
+    poll_interval = 5.0
+    for bc in _config.backends:
+        if bc.telemetry is None:
+            continue
+        if bc.telemetry.type == "json":
+            adapters[bc.name] = JsonTelemetryAdapter(
+                url=bc.telemetry.url, timeout_s=bc.telemetry.timeout_s
+            )
+            poll_interval = min(poll_interval, bc.telemetry.interval_s)
+        else:
+            logger.warning(
+                "Backend %s: unknown telemetry type %r, skipping.",
+                bc.name, bc.telemetry.type,
+            )
+    _telemetry_poller = TelemetryPoller(_registry, adapters, interval_s=poll_interval)
+    if start_health:
+        await _telemetry_poller.start()
+
     _request_logger = RequestLogger(_config.logging.jsonl_path)
 
 
@@ -104,6 +129,8 @@ async def shutdown_app() -> None:
     """Clean up app state."""
     if _health_checker:
         await _health_checker.stop()
+    if _telemetry_poller:
+        await _telemetry_poller.stop()
     if _request_logger:
         _request_logger.close()
     await close_client()
@@ -116,7 +143,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await shutdown_app()
 
 
-app = FastAPI(title="Tensormux", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Tensormux", version="0.2.1", lifespan=lifespan)
 
 
 def _error_json(message: str, error_type: str, status: int) -> JSONResponse:

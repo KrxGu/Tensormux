@@ -69,6 +69,9 @@ function renderBackends(data) {
         <span>${b.model}</span>
         ${b.tags.map(t => '<span>' + t + '</span>').join('')}
         <span>${b.url}</span>
+        ${b.queue_depth != null ? '<span>queue=' + b.queue_depth + '</span>' : ''}
+        ${b.gpu_mem_util != null ? '<span>gpu_mem=' + (b.gpu_mem_util * 100).toFixed(0) + '%</span>' : ''}
+        ${b.tokens_per_sec != null ? '<span>' + b.tokens_per_sec.toFixed(0) + ' tok/s</span>' : ''}
       </div>
     </div>
   `).join('');

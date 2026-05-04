@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import threading
-from typing import List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set
 
 from tensormux.config.models import BackendConfig
+
+if TYPE_CHECKING:
+    from tensormux.telemetry.base import BackendTelemetry
 
 
 class Backend:
@@ -31,6 +34,12 @@ class Backend:
         # Health check counters
         self.consecutive_failures: int = 0
         self.consecutive_successes: int = 0
+
+        # Telemetry signals (from a TelemetryAdapter, optional). All None means
+        # "no signal" — the router treats that as no penalty.
+        self.queue_depth: Optional[int] = None
+        self.tokens_per_sec: Optional[float] = None
+        self.gpu_mem_util: Optional[float] = None
 
     def increment_inflight(self) -> None:
         with self._lock:
@@ -71,6 +80,20 @@ class Backend:
             if self.consecutive_failures >= fail_threshold:
                 self.healthy = False
 
+    def set_telemetry(self, telemetry: BackendTelemetry) -> None:
+        """Push fresh telemetry. Does not touch health state."""
+        with self._lock:
+            self.queue_depth = telemetry.queue_depth
+            self.tokens_per_sec = telemetry.tokens_per_sec
+            self.gpu_mem_util = telemetry.gpu_mem_util
+
+    def clear_telemetry(self) -> None:
+        """Drop telemetry signals (e.g. after a fetch failure). Health unchanged."""
+        with self._lock:
+            self.queue_depth = None
+            self.tokens_per_sec = None
+            self.gpu_mem_util = None
+
     def to_status_dict(self) -> dict:
         return {
             "name": self.name,
@@ -83,6 +106,9 @@ class Backend:
             "inflight": self.inflight,
             "inflight_cost": round(self.inflight_cost, 2),
             "ewma_latency_ms": round(self.ewma_latency_ms, 2),
+            "queue_depth": self.queue_depth,
+            "tokens_per_sec": self.tokens_per_sec,
+            "gpu_mem_util": self.gpu_mem_util,
         }
 
 
