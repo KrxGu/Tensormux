@@ -1,0 +1,45 @@
+# VCS
+.git
+.gitignore
+.github
+
+# Virtualenvs
+.venv
+venv
+env
+
+# Caches
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Tests / dev-only
+tests
+mock_backend
+delay_proxy.py
+examples
+diagrams
+
+# Local artifacts
+*.jsonl
+tensormux_requests.jsonl
+*.log
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Docs not needed at runtime
+CLAUDE.md
+CHANGELOG.md

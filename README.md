@@ -30,7 +30,23 @@ Tensormux is **not** an inference engine — it doesn't manage KV cache, batchin
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) installed
 - Ports 8080, 9001, 9002 available
 
-### Start the demo
+### Option A — Pull the published image
+
+```bash
+# Pull the latest published image
+docker pull krishom70/tensormux:latest
+
+# Run with your own config (replace ./config.yaml with your file)
+docker run --rm -p 8080:8080 \
+  -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
+  -e TENSORMUX_CONFIG=/app/config.yaml \
+  krishom70/tensormux:latest
+```
+
+Images are published for `linux/amd64` and `linux/arm64`. Tags: `latest` and per-release `vX.Y.Z`.
+Mirror on GHCR: `ghcr.io/krxgu/tensormux:latest`.
+
+### Option B — Compose demo (gateway + 2 mock backends)
 
 ```bash
 git clone https://github.com/KrxGu/Tensormux.git && cd Tensormux
@@ -73,6 +89,16 @@ curl -s http://localhost:8080/tensormux/status | python3 -m json.tool
 # Recent requests (in-memory ring buffer, last 100)
 curl -s http://localhost:8080/tensormux/requests | python3 -m json.tool
 ```
+
+### Smoke test
+
+A scripted check (`/v1/models`, non-stream and streaming chat completions, required headers) is included:
+
+```bash
+python scripts/smoke_test.py --url http://localhost:8080 --model demo-model
+```
+
+Exits 0 on success, prints `FAIL:`/`ERROR:` and exits 1 otherwise. Used by the release workflow to validate published images.
 
 ### Live dashboard
 
