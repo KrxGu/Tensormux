@@ -162,3 +162,68 @@ def test_token_aware_deterministic_under_full_tie():
     ]
     chosen = TokenAware().select(pool, _ctx())
     assert chosen.name == "alpha"
+
+
+# ── capacity-aware penalties (telemetry-driven) ─────────────────────────
+
+
+def test_token_aware_no_penalty_when_weights_zero():
+    """Default behavior preserved: queue_weight=0 + mem_weight=0 means
+    telemetry signals do not influence routing even if present."""
+    a = _make_backend("a", ewma=10.0)
+    a.queue_depth = 100  # huge queue
+    b = _make_backend("b", ewma=10.0)
+    b.queue_depth = 0
+    chosen = TokenAware(queue_weight=0.0, mem_weight=0.0).select([a, b], _ctx())
+    # Tie on score (both backends idle, equal EWMA); name break -> "a".
+    assert chosen.name == "a"
+
+
+def test_token_aware_queue_penalty_redirects_traffic():
+    """With queue_weight tuned, a queue-loaded backend loses out even if its
+    base score is identical to an idle backend."""
+    a = _make_backend("a", ewma=10.0)
+    a.queue_depth = 100
+    b = _make_backend("b", ewma=10.0)
+    b.queue_depth = 0
+    chosen = TokenAware(queue_weight=1000.0).select([a, b], _ctx())
+    assert chosen.name == "b"
+
+
+def test_token_aware_gpu_mem_penalty_redirects_traffic():
+    a = _make_backend("a", ewma=10.0)
+    a.gpu_mem_util = 0.95
+    b = _make_backend("b", ewma=10.0)
+    b.gpu_mem_util = 0.10
+    chosen = TokenAware(mem_weight=100_000.0).select([a, b], _ctx())
+    assert chosen.name == "b"
+
+
+def test_token_aware_missing_telemetry_no_penalty():
+    """A backend with no telemetry signal must not be penalized."""
+    a = _make_backend("a", ewma=10.0)
+    # a.queue_depth stays None
+    b = _make_backend("b", ewma=10.0)
+    b.queue_depth = 50  # b has a known load
+    chosen = TokenAware(queue_weight=1000.0).select([a, b], _ctx())
+    # b's penalty pushes it below a; a wins.
+    assert chosen.name == "a"
+
+
+def test_token_aware_penalty_combines_queue_and_mem():
+    a = _make_backend("a", ewma=10.0)
+    a.queue_depth = 5
+    a.gpu_mem_util = 0.9
+    b = _make_backend("b", ewma=10.0)
+    b.queue_depth = 5
+    b.gpu_mem_util = 0.1
+    # Equal queue penalty cancels; mem penalty tips it to b.
+    chosen = TokenAware(queue_weight=10.0, mem_weight=10_000.0).select([a, b], _ctx())
+    assert chosen.name == "b"
+
+
+def test_create_strategy_passes_capacity_weights():
+    s = create_strategy("token_aware", queue_weight=2.5, mem_weight=7.0)
+    assert isinstance(s, TokenAware)
+    assert s.queue_weight == 2.5
+    assert s.mem_weight == 7.0

@@ -181,6 +181,12 @@ gateway:
   default_max_tokens: 256      # used when the request doesn't set max_tokens
   token_estimator: "heuristic" # only "heuristic" implemented today
 
+  # Capacity-aware penalties (added to the token_aware base score when backend
+  # telemetry exposes the corresponding signal). Default 0.0 = telemetry has
+  # no routing effect unless an operator tunes these.
+  queue_weight: 0.0            # multiplied by reported queue_depth
+  mem_weight: 0.0              # multiplied by reported gpu_mem_util (0.0-1.0)
+
 health:
   interval_s: 5
   timeout_s: 2
@@ -199,6 +205,14 @@ backends:
     weight: 80
     tags: ["fast"]
     health_endpoint: "/v1/models"
+    # Optional: tell Tensormux to scrape capacity signals from the backend.
+    # Failures here NEVER mark the backend unhealthy — telemetry is purely a
+    # routing-preference signal and falls back safely when missing.
+    telemetry:
+      type: "json"
+      url: "http://backend-fast:9001/stats"
+      interval_s: 5.0
+      timeout_s: 2.0
 
   - name: "slow"
     url: "http://backend-slow:9002"
