@@ -215,3 +215,146 @@ async def test_status_endpoint(client):
     assert len(data["backends"]) == 1
     assert data["backends"][0]["name"] == "test-backend"
     assert data["backends"][0]["healthy"] is True
+
+
+# ── Milestone B: token-aware routing end-to-end ─────────────────────────
+
+
+@pytest.fixture
+async def token_aware_client():
+    """Re-initialize the gateway with token_aware + two backends pointing at the mock."""
+    global _app_initialized
+    cfg = TensormuxConfig.from_dict({
+        "gateway": {
+            "host": "0.0.0.0",
+            "port": 8080,
+            "strategy": "token_aware",
+            "prefill_weight": 1.0,
+            "decode_weight": 4.0,
+            "default_max_tokens": 256,
+        },
+        "health": {"interval_s": 60, "timeout_s": 2, "fail_threshold": 2, "success_threshold": 1},
+        "logging": {"level": "DEBUG", "jsonl_path": _jsonl_path},
+        "backends": [
+            {
+                "name": "fast-backend",
+                "url": _mock_url,
+                "engine": "mock",
+                "model": "demo-model",
+                "weight": 1,
+                "tags": [],
+                "health_endpoint": "/v1/models",
+            },
+            {
+                "name": "slow-backend",
+                "url": _mock_url,
+                "engine": "mock",
+                "model": "demo-model",
+                "weight": 1,
+                "tags": [],
+                "health_endpoint": "/v1/models",
+            },
+        ],
+    })
+    await init_app(cfg, start_health=False)
+    _app_initialized = True  # next legacy-fixture run will see True; leave state owned by us
+
+    transport = httpx.ASGITransport(app=tensormux_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.mark.asyncio
+async def test_token_aware_status_advertises_strategy(token_aware_client):
+    resp = await token_aware_client.get("/tensormux/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["strategy"] == "token_aware"
+    names = {b["name"] for b in data["backends"]}
+    assert names == {"fast-backend", "slow-backend"}
+    # New per-backend field exposed for token-aware visibility.
+    for b in data["backends"]:
+        assert "inflight_cost" in b
+
+
+@pytest.mark.asyncio
+async def test_token_aware_routes_to_lower_latency_backend(token_aware_client):
+    """With identical inflight_cost, token-aware picks the backend with lower EWMA."""
+    from tensormux.api.main import _registry
+
+    assert _registry is not None
+    fast = _registry.get("fast-backend")
+    slow = _registry.get("slow-backend")
+    assert fast is not None and slow is not None
+    fast.ewma_latency_ms = 10.0
+    slow.ewma_latency_ms = 200.0
+    fast.inflight_cost = 0.0
+    slow.inflight_cost = 0.0
+
+    resp = await token_aware_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "route me"}],
+            "max_tokens": 64,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["x-tensormux-backend"] == "fast-backend"
+
+
+@pytest.mark.asyncio
+async def test_token_aware_avoids_busy_backend(token_aware_client):
+    """A backend with high inflight_cost should be skipped even if its EWMA is lower."""
+    from tensormux.api.main import _registry
+
+    assert _registry is not None
+    busy = _registry.get("fast-backend")
+    idle = _registry.get("slow-backend")
+    assert busy is not None and idle is not None
+    busy.ewma_latency_ms = 10.0
+    idle.ewma_latency_ms = 50.0
+    busy.inflight_cost = 100_000.0  # heavy inflight queue
+    idle.inflight_cost = 0.0
+
+    resp = await token_aware_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "avoid the busy one"}],
+            "max_tokens": 32,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["x-tensormux-backend"] == "slow-backend"
+
+
+@pytest.mark.asyncio
+async def test_token_aware_decrements_inflight_cost_after_request(token_aware_client):
+    """inflight_cost must return to its pre-request value once the response completes."""
+    from tensormux.api.main import _registry
+
+    assert _registry is not None
+    fast = _registry.get("fast-backend")
+    slow = _registry.get("slow-backend")
+    assert fast is not None and slow is not None
+    fast.ewma_latency_ms = 10.0
+    slow.ewma_latency_ms = 1000.0  # ensure routing picks fast
+    fast.inflight_cost = 0.0
+    slow.inflight_cost = 0.0
+
+    resp = await token_aware_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 16,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["x-tensormux-backend"] == "fast-backend"
+    # After the request completes, inflight_cost should be back to 0 on both.
+    assert fast.inflight_cost == 0.0
+    assert slow.inflight_cost == 0.0
+    assert fast.inflight == 0
+    assert slow.inflight == 0

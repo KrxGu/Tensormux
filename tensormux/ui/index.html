@@ -17,7 +17,7 @@
   .badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
   .badge-healthy { background: #0d3520; color: #3fb950; }
   .badge-unhealthy { background: #3d1214; color: #f85149; }
-  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; }
   .stat { text-align: center; }
   .stat-value { font-size: 22px; font-weight: 700; color: #c9d1d9; }
   .stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
@@ -60,6 +60,7 @@ function renderBackends(data) {
       </div>
       <div class="stats">
         <div class="stat"><div class="stat-value">${b.inflight}</div><div class="stat-label">Inflight</div></div>
+        <div class="stat"><div class="stat-value">${(b.inflight_cost ?? 0).toFixed(0)}</div><div class="stat-label">Cost Inflight</div></div>
         <div class="stat"><div class="stat-value">${b.ewma_latency_ms.toFixed(1)}</div><div class="stat-label">EWMA ms</div></div>
         <div class="stat"><div class="stat-value">${b.weight}</div><div class="stat-label">Weight</div></div>
       </div>

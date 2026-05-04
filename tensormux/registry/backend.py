@@ -24,6 +24,7 @@ class Backend:
         self._lock = threading.Lock()
         self.healthy: bool = True
         self.inflight: int = 0
+        self.inflight_cost: float = 0.0
         self.ewma_latency_ms: float = 0.0
         self._ewma_alpha: float = 0.3
 
@@ -38,6 +39,14 @@ class Backend:
     def decrement_inflight(self) -> None:
         with self._lock:
             self.inflight = max(0, self.inflight - 1)
+
+    def add_inflight_cost(self, cost: float) -> None:
+        with self._lock:
+            self.inflight_cost += cost
+
+    def subtract_inflight_cost(self, cost: float) -> None:
+        with self._lock:
+            self.inflight_cost = max(0.0, self.inflight_cost - cost)
 
     def update_latency(self, latency_ms: float) -> None:
         with self._lock:
@@ -72,6 +81,7 @@ class Backend:
             "tags": sorted(self.tags),
             "healthy": self.healthy,
             "inflight": self.inflight,
+            "inflight_cost": round(self.inflight_cost, 2),
             "ewma_latency_ms": round(self.ewma_latency_ms, 2),
         }
 

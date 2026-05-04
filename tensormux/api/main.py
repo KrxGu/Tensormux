@@ -26,7 +26,8 @@ from tensormux.metrics.collectors import (
 from tensormux.metrics.logger import RequestLogger
 from tensormux.proxy.forward import close_client, forward_get, forward_non_stream, forward_stream
 from tensormux.registry.backend import Backend, BackendRegistry
-from tensormux.router.strategies import RoutingStrategy, create_strategy
+from tensormux.router.strategies import RequestContext, RoutingStrategy, create_strategy
+from tensormux.router.token_estimator import estimate_prompt_tokens, extract_max_tokens
 from tensormux.util.helpers import generate_request_id, now_ms
 
 logger = logging.getLogger("tensormux")
@@ -80,7 +81,12 @@ async def init_app(config: Optional[TensormuxConfig] = None, start_health: bool 
     _registry = BackendRegistry(backends)
     logger.info("Loaded %d backend(s): %s", len(backends), [b.name for b in backends])
 
-    _strategy = create_strategy(_config.gateway.strategy)
+    _strategy = create_strategy(
+        _config.gateway.strategy,
+        prefill_weight=_config.gateway.prefill_weight,
+        decode_weight=_config.gateway.decode_weight,
+        default_max_tokens=_config.gateway.default_max_tokens,
+    )
     logger.info("Routing strategy: %s", _config.gateway.strategy)
 
     for b in backends:
@@ -110,7 +116,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await shutdown_app()
 
 
-app = FastAPI(title="Tensormux", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Tensormux", version="0.2.0", lifespan=lifespan)
 
 
 def _error_json(message: str, error_type: str, status: int) -> JSONResponse:
@@ -120,10 +126,30 @@ def _error_json(message: str, error_type: str, status: int) -> JSONResponse:
     )
 
 
-def _select_backend(model: str, tags: Optional[Set[str]] = None) -> Optional[Backend]:
+def _build_request_context(body: Dict[str, Any]) -> RequestContext:
+    """Estimate prompt tokens, resolve max_tokens, and precompute cost.
+
+    Cost is `prompt * prefill_weight + max_tokens * decode_weight`. Computed
+    once per request so each strategy doesn't re-derive it.
+    """
+    assert _config is not None
+    prompt_tokens = estimate_prompt_tokens(body.get("messages"))
+    max_tokens = extract_max_tokens(body, _config.gateway.default_max_tokens)
+    cost = (
+        prompt_tokens * _config.gateway.prefill_weight
+        + max_tokens * _config.gateway.decode_weight
+    )
+    return RequestContext(prompt_tokens=prompt_tokens, max_tokens=max_tokens, cost=cost)
+
+
+def _select_backend(
+    model: str,
+    tags: Optional[Set[str]] = None,
+    request_ctx: Optional[RequestContext] = None,
+) -> Optional[Backend]:
     assert _registry is not None and _strategy is not None
     eligible = _registry.eligible(model, tags)
-    return _strategy.select(eligible)
+    return _strategy.select(eligible, request_ctx)
 
 
 @app.post("/v1/chat/completions")
@@ -142,7 +168,8 @@ async def chat_completions(request: Request) -> Response:
     model = body.get("model", "")
     is_stream = body.get("stream", False)
 
-    backend = _select_backend(model)
+    request_ctx = _build_request_context(body)
+    backend = _select_backend(model, request_ctx=request_ctx)
     if backend is None:
         return _error_json(
             f"No healthy backend available for model {model!r}",
@@ -151,6 +178,7 @@ async def chat_completions(request: Request) -> Response:
         )
 
     backend.increment_inflight()
+    backend.add_inflight_cost(request_ctx.cost)
     BACKEND_INFLIGHT.labels(backend=backend.name).inc()
 
     status_code = 200
@@ -179,6 +207,7 @@ async def chat_completions(request: Request) -> Response:
                 finally:
                     latency = now_ms() - start
                     backend.decrement_inflight()
+                    backend.subtract_inflight_cost(request_ctx.cost)
                     backend.update_latency(latency)
                     BACKEND_INFLIGHT.labels(backend=backend.name).dec()
                     REQUESTS_TOTAL.labels(
@@ -224,6 +253,7 @@ async def chat_completions(request: Request) -> Response:
         if not is_stream:
             latency = now_ms() - start
             backend.decrement_inflight()
+            backend.subtract_inflight_cost(request_ctx.cost)
             backend.update_latency(latency)
             BACKEND_INFLIGHT.labels(backend=backend.name).dec()
             REQUESTS_TOTAL.labels(
