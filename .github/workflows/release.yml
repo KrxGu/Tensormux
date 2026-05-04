@@ -30,8 +30,10 @@ jobs:
             RAW="${GITHUB_REF_NAME}"
           fi
           VERSION="${RAW#v}"
+          OWNER_LC="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Publishing version: ${VERSION}"
+          echo "owner_lc=${OWNER_LC}" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: ${VERSION} (ghcr owner: ${OWNER_LC})"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -62,8 +64,8 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/tensormux:${{ steps.meta.outputs.version }}
             ${{ secrets.DOCKERHUB_USERNAME }}/tensormux:latest
-            ghcr.io/${{ github.repository_owner }}/tensormux:${{ steps.meta.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/tensormux:latest
+            ghcr.io/${{ steps.meta.outputs.owner_lc }}/tensormux:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ steps.meta.outputs.owner_lc }}/tensormux:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
