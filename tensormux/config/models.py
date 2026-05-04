@@ -12,6 +12,12 @@ class GatewayConfig(BaseModel):
     port: int = 8080
     strategy: str = "least_inflight"
 
+    # Token-aware routing knobs (only consulted when strategy == "token_aware").
+    prefill_weight: float = Field(default=1.0, ge=0.0)
+    decode_weight: float = Field(default=4.0, ge=0.0)
+    default_max_tokens: int = Field(default=256, ge=1)
+    token_estimator: str = "heuristic"
+
 
 class HealthConfig(BaseModel):
     interval_s: float = 5.0

@@ -17,7 +17,7 @@ Tensormux is **not** an inference engine — it doesn't manage KV cache, batchin
 
 - **OpenAI-compatible API** — drop-in replacement (`/v1/chat/completions`, `/v1/models`)
 - **Streaming SSE passthrough** — zero-copy byte forwarding, no parsing
-- **3 routing strategies** — weighted round-robin, least inflight, EWMA latency
+- **4 routing strategies** — weighted round-robin, least inflight, EWMA latency, **token-aware**
 - **Health checking & failover** — active pings + passive failure detection
 - **Prometheus metrics** — request counters, latency histograms, backend health gauges
 - **JSONL request logs** — every request logged with backend, latency, status
@@ -171,7 +171,15 @@ Create a `config.yaml` (or use one from the `configs/` directory):
 gateway:
   host: "0.0.0.0"
   port: 8080
-  strategy: "least_inflight"  # weighted_round_robin | least_inflight | ewma_latency
+  strategy: "least_inflight"  # weighted_round_robin | least_inflight | ewma_latency | token_aware
+
+  # Token-aware routing knobs (only used when strategy: "token_aware").
+  # Score = (backend.inflight_cost + request_cost) * (ewma_latency or 1.0)
+  # request_cost = prompt_tokens * prefill_weight + max_tokens * decode_weight
+  prefill_weight: 1.0          # weight applied to estimated prompt tokens
+  decode_weight: 4.0           # weight applied to max_tokens (decode is more expensive per token)
+  default_max_tokens: 256      # used when the request doesn't set max_tokens
+  token_estimator: "heuristic" # only "heuristic" implemented today
 
 health:
   interval_s: 5

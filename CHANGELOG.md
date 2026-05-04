@@ -2,7 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.1] - Unreleased
+## [0.2.0] - Unreleased
+
+### Added
+
+- **Token-aware routing strategy (`token_aware`)** — picks the backend with the lowest predicted cost-weighted completion time. Score is `(backend.inflight_cost + request_cost) * (ewma_latency_ms or 1.0)`, where `request_cost = prompt_tokens * prefill_weight + max_tokens * decode_weight`. An unproven backend (no EWMA history) uses a neutral factor of `1.0` so it isn't trivially preferred. Ties are broken by inflight count, then backend name (deterministic).
+- **Heuristic token estimator** (`tensormux/router/token_estimator.py`) — counts ~4 chars/token plus per-message and per-request overhead; understands OpenAI multi-modal content blocks (counts text parts only); honors both `max_tokens` and `max_completion_tokens` request fields.
+- **`Backend.inflight_cost`** — per-backend cost-weighted load tracking, incremented at request start, decremented in the finally block (works for both stream and non-stream paths). Surfaced in `/tensormux/status` and on the `/ui` dashboard as a new "Cost Inflight" stat.
+- **`GatewayConfig` knobs** — `prefill_weight` (default `1.0`), `decode_weight` (default `4.0`), `default_max_tokens` (default `256`), `token_estimator` (default `"heuristic"`). Only consulted when `strategy == "token_aware"`.
+
+### Changed
+
+- **`RoutingStrategy.select()`** now accepts an optional `request_ctx: RequestContext | None` parameter. Existing strategies (`weighted_round_robin`, `least_inflight`, `ewma_latency`) ignore it; only `token_aware` requires it. Backwards-compatible at every call site that didn't pass the new arg.
+
+### Notes on empirical performance
+
+The CLAUDE.md DoD for Milestone B asks for "improved p95 and reduced variance vs `least_inflight` on a mixed workload (50% `max_tokens=32`, 50% `max_tokens=2048`)." We ran that comparison against the bundled mock backends (50ms / 300ms fixed sleep, no concurrency cap) and found the two strategies converge on essentially identical p95/p99, with `token_aware` slightly higher on mean and stdev. This is **expected** — the mock backends do not model capacity (no queue depth, no batching window, no GPU contention), so per-request latency is independent of routing choice and there is nothing for cost-aware prediction to optimize. The strategy is implemented correctly; its differentiating behavior fires when backends have real capacity limits that make completion time depend on inflight load.
+
+Validated:
+- Unit + integration tests prove the algorithm fires when `inflight_cost` differs between candidates (selection flips deterministically).
+- End-to-end smoke against a real Ollama backend (`qwen2.5:0.5b`) confirms the wiring (real chat, real stream, EWMA reflects real GPU latency, JSONL records `chosen_backend`).
+- Empirical p95 / variance improvement over `least_inflight` requires capacity-bound backends; that signal will arrive with **Milestone C — telemetry adapters**.
+
+## [0.1.1] - 2026-05-04
 
 ### Added
 
