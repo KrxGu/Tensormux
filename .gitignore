@@ -18,6 +18,7 @@ build/
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Tensormux runtime
 tensormux_requests.jsonl
